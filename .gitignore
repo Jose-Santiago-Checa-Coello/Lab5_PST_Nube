@@ -1,0 +1,12 @@
+# Variables de entorno y secretos del firmware
+.env
+.env.*
+!.env.example
+**/secrets.h
+
+# Base de datos SQLite local y cache de Python
+*.db
+*.sqlite3
+__pycache__/
+.venv/
+venv/

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard IoT - ESPOL</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f6f9;
+            color: #333;
+            padding: 16px;
+        }
+        .contenedor {
+            max-width: 900px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        header {
+            background-color: #1b365d;
+            color: white;
+            padding: 16px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .tarjetas-kpi {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+        }
+        .tarjeta {
+            background: white;
+            padding: 16px;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            text-align: center;
+        }
+        .tarjeta h3 { font-size: 0.9rem; color: #666; margin-bottom: 8px; }
+        .tarjeta .valor { font-size: 1.6rem; font-weight: bold; color: #1b365d; }
+        .panel-grafico, .panel-control {
+            background: white;
+            padding: 16px;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            text-align: center;
+        }
+        .canvas-wrapper {
+            position: relative;
+            width: 100%;
+            height: 320px;
+        }
+        .btn-actuador {
+            width: 100%;
+            max-width: 320px;
+            padding: 16px 24px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: white;
+            background-color: #198754;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .btn-actuador.activo { background-color: #dc3545; }
+        @media (max-width: 600px) {
+            .canvas-wrapper { height: 240px; }
+            .tarjeta .valor { font-size: 1.4rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="contenedor">
+        <header>
+            <h2>Monitor Telematico ESP8266</h2>
+            <small id="estadoConexion">Conectando con el servidor...</small>
+        </header>
+
+        <section class="tarjetas-kpi">
+            <div class="tarjeta">
+                <h3>Ultima Temperatura</h3>
+                <div class="valor" id="valTemp">-- C</div>
+            </div>
+            <div class="tarjeta">
+                <h3>Ultima Humedad</h3>
+                <div class="valor" id="valHum">-- %</div>
+            </div>
+            <div class="tarjeta">
+                <h3>Estado Actuador</h3>
+                <div class="valor" id="valActuador">APAGADO</div>
+            </div>
+        </section>
+
+        <section class="panel-grafico">
+            <div class="canvas-wrapper">
+                <canvas id="graficoTelemetria"></canvas>
+            </div>
+        </section>
+
+        <section class="panel-control">
+            <h3>Control Remoto de Actuador (Rele / LED)</h3>
+            <button id="btnActuador" class="btn-actuador" onclick="alternarActuador()">
+                ENCENDER ACTUADOR
+            </button>
+        </section>
+    </div>
+
+    <script>
+        let estadoActuador = 0;
+        const ctx = document.getElementById('graficoTelemetria').getContext('2d');
+        const grafico = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Temperatura (C)',
+                        data: [],
+                        borderColor: '#dc3545',
+                        tension: 0.3
+                    },
+                    {
+                        label: 'Humedad (%)',
+                        data: [],
+                        borderColor: '#0d6efd',
+                        tension: 0.3
+                    }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        async function actualizarDashboard() {
+            try {
+                const resLecturas = await fetch('/api/lecturas?limite=20');
+                const lecturas = await resLecturas.json();
+
+                if (lecturas.length > 0) {
+                    grafico.data.labels = lecturas.map(
+                        d => d.timestamp.split(' ')[1] || d.timestamp
+                    );
+                    grafico.data.datasets[0].data = lecturas.map(d => d.temperatura);
+                    grafico.data.datasets[1].data = lecturas.map(d => d.humedad);
+                    grafico.update();
+
+                    const ultima = lecturas[lecturas.length - 1];
+                    document.getElementById('valTemp').innerText =
+                        ultima.temperatura.toFixed(1) + ' C';
+                    document.getElementById('valHum').innerText =
+                        ultima.humedad.toFixed(1) + ' %';
+                }
+
+                const resAct = await fetch('/api/actuador');
+                const dataAct = await resAct.json();
+                actualizarInterfazBoton(dataAct.estado);
+
+                document.getElementById('estadoConexion').innerText =
+                    'Sincronizado: ' + new Date().toLocaleTimeString();
+            } catch (error) {
+                document.getElementById('estadoConexion').innerText =
+                    'Error de conexion con la API';
+            }
+        }
+
+        async function alternarActuador() {
+            const nuevoEstado = estadoActuador === 1 ? 0 : 1;
+            const res = await fetch('/api/actuador', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ estado: nuevoEstado })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                actualizarInterfazBoton(data.estado);
+            }
+        }
+
+        function actualizarInterfazBoton(estado) {
+            estadoActuador = estado;
+            const btn = document.getElementById('btnActuador');
+            const lbl = document.getElementById('valActuador');
+            if (estado === 1) {
+                btn.innerText = 'APAGAR ACTUADOR';
+                btn.classList.add('activo');
+                lbl.innerText = 'ENCENDIDO';
+            } else {
+                btn.innerText = 'ENCENDER ACTUADOR';
+                btn.classList.remove('activo');
+                lbl.innerText = 'APAGADO';
+            }
+        }
+
+        setInterval(actualizarDashboard, 3000);
+        actualizarDashboard();
+    </script>
+</body>
+</html>
